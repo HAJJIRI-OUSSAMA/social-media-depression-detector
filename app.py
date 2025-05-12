@@ -13,8 +13,28 @@ import snscrape.modules.twitter as sntwitter
 import re
 from urllib.parse import urlparse
 import tweepy
+from tweepy import TweepyException
+import time
 import os
 from datetime import datetime
+from dotenv import load_dotenv
+import os
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
+
+# Access the token
+TWITTER_BEARER_TOKEN = os.getenv('TWITTER_BEARER_TOKEN')
+
+# Add this at the start of your app
+if not os.getenv('TWITTER_BEARER_TOKEN'):
+    st.error("Twitter Bearer Token not found. Please check your .env file.")
+    logger.error("Missing Twitter Bearer Token")
 
 # Initialize VADER sentiment analyzer
 sia = SentimentIntensityAnalyzer()
@@ -93,46 +113,41 @@ def setup_twitter_api():
     )
     return client
 
-def extract_tweet_from_url(url):
+
+def extract_tweet(url):
     """
-    Extract tweet content using Twitter API v2
-    Returns: tuple (tweet_text, hashtags)
+    Extract tweet content with error handling
+    Args:
+        url (str): Twitter post URL
+    Returns:
+        str: Tweet text or None if failed
     """
     try:
         # Extract tweet ID from URL
         tweet_id = url.split('/')[-1].split('?')[0]
         
         # Initialize Twitter client
-        client = setup_twitter_api()
+        client = tweepy.Client(
+            bearer_token=os.getenv('TWITTER_BEARER_TOKEN'),
+            wait_on_rate_limit=True
+        )
         
         # Fetch tweet
         tweet = client.get_tweet(
-            tweet_id,
-            tweet_fields=['entities', 'text']
+            id=tweet_id,
+            tweet_fields=['text']
         )
         
-        if not tweet.data:
-            raise ValueError("Tweet not found")
+        if tweet and tweet.data:
+            return tweet.data.text
+        return None
             
-        # Extract text and hashtags
-        text = tweet.data.text
-        hashtags = ''
-        if 'entities' in tweet.data and 'hashtags' in tweet.data.entities:
-            hashtags = ' '.join([f"#{tag['text']}" for tag in tweet.data.entities['hashtags']])
-            
-        return text, hashtags
-        
+    except TweepyException as e:
+        st.error(f"Twitter API Error: {str(e)}")
+        return None
     except Exception as e:
-        st.warning(f"""
-        Tweet fetching failed: {str(e)}
-        
-        Please copy-paste the tweet content manually in the fields below.
-        
-        To use the Twitter API feature:
-        1. Get your Twitter API bearer token from https://developer.twitter.com
-        2. Set it as an environment variable: TWITTER_BEARER_TOKEN
-        """)
-        return None, None
+        st.error(f"Error: {str(e)}")
+        return None
 
 # UI Components
 st.title("🧠 Depression Prediction from Social Media Posts")
@@ -157,29 +172,57 @@ else:
     st.write(f"📊 **{selected_model_name} Accuracy:** N/A")
 
 # User input form
-tweet_url = st.text_input("🔗 Enter Twitter/X post URL (optional):")
+tweet_url = st.text_input("🔗 Enter Twitter/X post URL:")
 
 if tweet_url:
     if "twitter.com" in tweet_url or "x.com" in tweet_url:
-        with st.spinner("Fetching tweet..."):
-            tweet_text, tweet_hashtags = extract_tweet_from_url(tweet_url)
-            if tweet_text:
-                post_text = tweet_text
-                hashtags = tweet_hashtags
-                st.success("Tweet fetched successfully!")
-            else:
-                st.info("You can manually enter the tweet content below.")
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Show progress while fetching
+        for i in range(100):
+            progress_bar.progress(i + 1)
+            status_text.text(f"Fetching tweet... ({i+1}%)")
+            time.sleep(0.1)
+            
+            if i == 50:  # Midway check
+                tweet_text = extract_tweet(tweet_url)
+                if tweet_text:
+                    break
+        
+        progress_bar.empty()
+        status_text.empty()
+        
+        if tweet_text:
+            st.success("Tweet fetched successfully!")
+            st.write("**Tweet content:**")
+            st.write(tweet_text)
+            # Continue with prediction...
+        else:
+            st.error("Failed to fetch tweet. Please check the URL or try again later.")
     else:
-        st.error("Please enter a valid Twitter/X post URL")
+        st.error("Please enter a valid Twitter/X URL")
 
 # Add a note about manual input
 st.markdown("""
 > **Note**: If tweet fetching fails, you can manually copy-paste the content from Twitter/X.
 """)
 
-# Keep existing text inputs as fallback
-post_text = st.text_area("📝 Enter the post text:", value=post_text if 'post_text' in locals() else "")
-hashtags = st.text_input("🏷️ Enter hashtags:", value=hashtags if 'hashtags' in locals() else "")
+st.markdown("""
+### Tweet Input Guide
+1. Go to the tweet you want to analyze
+2. Copy the full tweet text
+3. Paste it in the text area below
+4. Copy any hashtags from the tweet
+5. Paste them in the hashtags field
+
+Example format:
+- Text: "Feeling overwhelmed today. Need to take a break and breathe."
+- Hashtags: #mentalhealth #selfcare
+""")
+
+post_text = st.text_area("📝 Post text:", value=post_text if 'post_text' in locals() else "")
+hashtags = st.text_input("🏷️ Hashtags:", value=hashtags if 'hashtags' in locals() else "")
 
 submitted = st.button("🔍 Predict")
 
@@ -241,3 +284,10 @@ if submitted and post_text.strip() != "":
     st.markdown("### 🧾 Summary of Input:")
     st.write(f"**Text:** {cleaned_text}")
     st.write(f"**Hashtags:** {cleaned_hashtags}")
+
+if st.checkbox("Debug Twitter API Connection"):
+    try:
+        client = tweepy.Client(bearer_token=os.getenv('TWITTER_BEARER_TOKEN'))
+        st.success("✅ Twitter API connection successful")
+    except Exception as e:
+        st.error(f"❌ Twitter API connection failed: {str(e)}")

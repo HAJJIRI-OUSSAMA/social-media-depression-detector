@@ -116,6 +116,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📧 Contact
 
-Your Name - [@yourtwitter](https://twitter.com/yourtwitter) - email@example.com
+HAJJIRI Oussama
 
 Project Link: [https://github.com/yourusername/social-media-depression-detector](https://github.com/yourusername/social-media-depression-detector)
